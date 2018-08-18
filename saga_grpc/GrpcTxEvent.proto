@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.tstack.matrix.platform.saga.pack.contract.grpc";
+option java_outer_classname = "TxEventProto";
+
+option go_package = "saga_grpc";
+
+service TxEventService {
+  rpc OnConnected (GrpcServiceConfig) returns (stream GrpcCompensateCommand) {
+  }
+  rpc OnTxEvent (GrpcTxEvent) returns (GrpcAck) {}
+  rpc OnDisconnected (GrpcServiceConfig) returns (GrpcAck) {
+  }
+}
+
+message GrpcServiceConfig {
+  string serviceName = 1;
+  string instanceId = 2;
+}
+
+message GrpcAck {
+  bool aborted = 1;
+}
+
+message GrpcTxEvent {
+  int64 timestamp = 1;
+  string globalTxId = 2;
+  string localTxId = 3;
+  string parentTxId = 4;
+  string type = 5;
+  string compensationMethod = 6;
+  bytes payloads = 7;
+  string serviceName = 8;
+  string instanceId = 9;
+  int32 timeout = 10;
+  int32 retries = 11;
+  string retryMethod = 12;
+}
+
+message GrpcCompensateCommand {
+  string globalTxId = 1;
+  string localTxId = 2;
+  string parentTxId = 3;
+  string compensationMethod = 4;
+  bytes payloads = 5;
+}
+
