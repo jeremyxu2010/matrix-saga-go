@@ -175,6 +175,10 @@ func main() {
 
 2. 发送HTTP请求到其它业务服务时，使用[sagactx.InjectIntoHttpHeaders](./context/saga_agent_context.go)将当前的saga上下文信息织入HTTP请求头中。
 
+## TODO
+
+1. 支持多alpha负载均衡
+
 
 ## License
 Licensed under an [Apache 2.0 license](LICENSE).
