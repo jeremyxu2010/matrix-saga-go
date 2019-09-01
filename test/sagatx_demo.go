@@ -90,7 +90,9 @@ func CancelTransferIn(to string, amount int) error {
 
 func main() {
 	utils.DisableHttpProxy()
-	saga.InitSagaAgent("saga-go-demo", "10.12.142.216:30571", nil)
+	// 这里的第一个参数是本服务的名称，第二个参数是alpha-server的地址，第三个参数是Logger
+	saga.InitSagaAgent("saga-go-demo", "127.0.0.1:8080", nil)
+	fmt.Printf("foo balance: %d, bar balance: %d\n", BALANCES["foo"],  BALANCES["bar"])
 	TransferMoneySagaStartDecorated()
 	stopped := false
 	go func() {
@@ -100,7 +102,7 @@ func main() {
 		stopped = true
 	}()
 	for !stopped {
-		fmt.Println(BALANCES["foo"], BALANCES["bar"])
+		fmt.Printf("foo balance: %d, bar balance: %d\n", BALANCES["foo"],  BALANCES["bar"])
 		time.Sleep(time.Second * 3)
 	}
 }
