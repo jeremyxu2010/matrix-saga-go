@@ -1,4 +1,4 @@
-package test
+package main
 
 import (
 	"errors"
@@ -16,10 +16,11 @@ var (
 	TransferMoneySagaStartDecorated func() error
 	TransferOutCompensableDecorated func(from string, amount int) error
 	TransferInCompensableDecorated  func(to string, amount int) error
+	TransferMoneySagaEndDecorated   func() error
 )
 
 func init() {
-	err := saga.DecorateSagaStartMethod(&TransferMoneySagaStartDecorated, TransferMoney, 20, true)
+	err := saga.DecorateSagaStartMethod(&TransferMoneySagaStartDecorated, TransferMoney, 20, false)
 	if err != nil {
 		panic(err)
 	}
@@ -28,6 +29,10 @@ func init() {
 		panic(err)
 	}
 	err = saga.DecorateCompensableMethod(&TransferInCompensableDecorated, TransferIn, CancelTransferIn, 5)
+	if err != nil {
+		panic(err)
+	}
+	err = saga.DecorateSagaEndMethod(&TransferMoneySagaEndDecorated, TransferMoneyEnd)
 	if err != nil {
 		panic(err)
 	}
@@ -50,6 +55,10 @@ func TransferMoney() error {
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func TransferMoneyEnd() error {
 	return nil
 }
 
@@ -94,6 +103,7 @@ func main() {
 	saga.InitSagaAgent("saga-go-demo", "127.0.0.1:8080", nil)
 	fmt.Printf("foo balance: %d, bar balance: %d\n", BALANCES["foo"], BALANCES["bar"])
 	TransferMoneySagaStartDecorated()
+	TransferMoneySagaEndDecorated()
 	stopped := false
 	go func() {
 		s := make(chan os.Signal)

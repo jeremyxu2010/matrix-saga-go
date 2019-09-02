@@ -2,40 +2,39 @@ package saga
 
 import (
 	"context"
-	"sync"
-	"github.com/jeremyxu2010/matrix-saga-go/utils"
-	"reflect"
-	"github.com/jeremyxu2010/matrix-saga-go/constants"
-	"github.com/jeremyxu2010/matrix-saga-go/transport"
-	"github.com/jeremyxu2010/matrix-saga-go/processor"
-	"github.com/jeremyxu2010/matrix-saga-go/metadata"
-	"github.com/jeremyxu2010/matrix-saga-go/degorator"
-	"github.com/jeremyxu2010/matrix-saga-go/log"
 	"errors"
 	"fmt"
 	"github.com/jeremyxu2010/matrix-saga-go/config"
+	"github.com/jeremyxu2010/matrix-saga-go/constants"
 	sagactx "github.com/jeremyxu2010/matrix-saga-go/context"
+	"github.com/jeremyxu2010/matrix-saga-go/degorator"
+	"github.com/jeremyxu2010/matrix-saga-go/log"
+	"github.com/jeremyxu2010/matrix-saga-go/metadata"
+	"github.com/jeremyxu2010/matrix-saga-go/processor"
 	"github.com/jeremyxu2010/matrix-saga-go/serializer"
+	"github.com/jeremyxu2010/matrix-saga-go/transport"
+	"github.com/jeremyxu2010/matrix-saga-go/utils"
+	"reflect"
+	"sync"
 )
 
 var (
-	initOnce    sync.Once
-
+	initOnce sync.Once
 
 	compensationProcessor *processor.CompensationProcessor
 	serviceConfig         *config.ServiceConfig
 	transportContractor   *transport.TransportContractor
-	s serializer.Serializer
+	s                     serializer.Serializer
 
 	logger log.Logger
 )
 
-func init()  {
+func init() {
 	s = serializer.NewGobSerializer()
 	compensationProcessor = processor.NewCompensationProcessor(s, logger)
 }
 
-func DecorateSagaStartMethod(sagaStartPtr interface{}, target interface{}, timeout int) error {
+func DecorateSagaStartMethod(sagaStartPtr interface{}, target interface{}, timeout int, autoClose bool) error {
 	sagaStartInjectBefore := func(ctx context.Context) error {
 		sagaAgentCtx := sagactx.NewSagaAgentContext()
 		sagaAgentCtx.Initialize()
@@ -50,6 +49,37 @@ func DecorateSagaStartMethod(sagaStartPtr interface{}, target interface{}, timeo
 
 	sagaStartInjectAfter := func(ctx context.Context) error {
 		defer func() {
+			if autoClose {
+				sagactx.ClearSagaAgentContext()
+			}
+		}()
+		sagaAgentCtx, err := sagactx.GetSagaAgentContext()
+		if err != nil {
+			transportContractor.SendTxAbortedEvent(sagaAgentCtx, "", utils.GetFnName(target), err)
+			logger.LogError(fmt.Sprintf("Transaction %v failed.", sagaAgentCtx))
+			return err
+		}
+		if autoClose {
+			return sendSagaEndEvent(ctx, sagaAgentCtx, target)
+		} else {
+			logger.LogDebug(fmt.Sprintf("Transaction with context %v is not finished in the SagaStarted annotated method.", sagaAgentCtx))
+			return nil
+		}
+	}
+
+	err := degorator.Decorate(sagaStartPtr, target, sagaStartInjectBefore, sagaStartInjectAfter)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func DecorateSagaEndMethod(sagaStartPtr interface{}, target interface{}) error {
+	sagaEndInjectBefore := func(ctx context.Context) error {
+		return nil
+	}
+	sagaEndInjectAfter := func(ctx context.Context) error {
+		defer func() {
 			sagactx.ClearSagaAgentContext()
 		}()
 		sagaAgentCtx, err := sagactx.GetSagaAgentContext()
@@ -58,34 +88,37 @@ func DecorateSagaStartMethod(sagaStartPtr interface{}, target interface{}, timeo
 			logger.LogError(fmt.Sprintf("Transaction %v failed.", sagaAgentCtx))
 			return err
 		}
-		if m, ok := metadata.FromContext(ctx); ok {
-			if m[constants.KEY_FUNCTION_CALL_ERROR] != nil{
-				if v, ok := m[constants.KEY_FUNCTION_CALL_ERROR].(error); ok {
-					err = v.(error)
-					transportContractor.SendTxAbortedEvent(sagaAgentCtx, "", utils.GetFnName(target), err)
-					logger.LogError(fmt.Sprintf("Transaction %v failed.", sagaAgentCtx))
-					return err
-				}
-			}
-		}
-		aborted, err := transportContractor.SendSagaEndedEvent(sagaAgentCtx)
-		if err != nil {
-			transportContractor.SendTxAbortedEvent(sagaAgentCtx, "", utils.GetFnName(target), err)
-			logger.LogError(fmt.Sprintf("Transaction %v failed.", sagaAgentCtx))
-			return err
-		}
-
-		if aborted {
-			return errors.New(fmt.Sprintf("transaction %s is aborted", sagaAgentCtx.GlobalTxId))
-		}
-		logger.LogDebug(fmt.Sprintf("Transaction with context %v has finished.", sagaAgentCtx))
-		return nil
+		return sendSagaEndEvent(ctx, sagaAgentCtx, target)
 	}
-
-	err := degorator.Decorate(sagaStartPtr, target, sagaStartInjectBefore, sagaStartInjectAfter)
+	err := degorator.Decorate(sagaStartPtr, target, sagaEndInjectBefore, sagaEndInjectAfter)
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func sendSagaEndEvent(ctx context.Context, sagaAgentCtx *sagactx.SagaAgentContext, target interface{}) error {
+	if m, ok := metadata.FromContext(ctx); ok {
+		if m[constants.KEY_FUNCTION_CALL_ERROR] != nil {
+			if v, ok := m[constants.KEY_FUNCTION_CALL_ERROR].(error); ok {
+				err := v.(error)
+				transportContractor.SendTxAbortedEvent(sagaAgentCtx, "", utils.GetFnName(target), err)
+				logger.LogError(fmt.Sprintf("Transaction %v failed.", sagaAgentCtx))
+				return err
+			}
+		}
+	}
+	aborted, err := transportContractor.SendSagaEndedEvent(sagaAgentCtx)
+	if err != nil {
+		transportContractor.SendTxAbortedEvent(sagaAgentCtx, "", utils.GetFnName(target), err)
+		logger.LogError(fmt.Sprintf("Transaction %v failed.", sagaAgentCtx))
+		return err
+	}
+
+	if aborted {
+		return errors.New(fmt.Sprintf("transaction %s is aborted", sagaAgentCtx.GlobalTxId))
+	}
+	logger.LogDebug(fmt.Sprintf("Transaction with context %v has finished.", sagaAgentCtx))
 	return nil
 }
 
@@ -190,5 +223,3 @@ func InitSagaAgent(serviceName string, coordinatorAddress string, l log.Logger) 
 	}
 	return nil
 }
-
-
